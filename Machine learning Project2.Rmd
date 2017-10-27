@@ -1,0 +1,474 @@
+---
+title: 'Practical Machine Learning: Prediction Assignment Writeup'
+author: "I. Chivite"
+date: "October/2017"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Abstract
+
+One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. 
+
+The goal of this project is to predict the manner in which six subjects did a particular exercise using  [data](http://groupware.les.inf.puc-rio.br/har) from accelerometers on the belt, forearm, arm, and dumbbell. This data was made available by the [group of research and development of groupware technologies](http://groupware.les.inf.puc-rio.br/) which is specialized, among other things, in *Human Activity Recognition*.    
+
+
+## Introduction 
+
+Participants were asked to perform one set of 10 repetitions of the *Unilateral Dumbbell Biceps Curl* in five different ways: 
+
+* **Class A:** Exactly according to the specification
+* **Class B:** Throwing the elbows to the front
+* **Class C:** Lifting the dumbbell only halfway 
+* **Class D:** Lowering the dumbbell only halfway
+* **Class E:** Throwing the hips to the front 
+
+Class A is the right way, while the other 4 classes correspond to common mistakes. A full description of the study and methodology is available at [*Velloso, et al*](http://groupware.les.inf.puc-rio.br/work.jsf?p1=11201)
+
+## Feature extraction and selection
+
+![Sensor Configuration. Figure from [*Velloso, et al*](http://groupware.les.inf.puc-rio.br/work.jsf?p1=11201)](werables.jpeg)
+
+* Readings from sensors on the belt, forearm, arm, and dumbbell were collected on each of the six subjects in overlapping time windows of 2.5 s.   
+
+* The Euler angles (roll, pitch and yaw) were specified together with other derived features.    
+
+* Raw accelerometer, gyroscope and magnetometer readings were also recorded.  
+
+* For the Euler angles of each of the four sensors, derived features were obtained. They are: mean, variance, standard deviation, max and min.   
+
+* The set of criteria for the choice of these features and derived quantities, a total seventeen variables, is described in the original publication <sup>[1](#myfootnote1)</sup>.   
+
+#### Features selected: (mean, var, max and min per window)  
+
+**Belt**
+
+|    |   Feature   |   Column Name   |   Associated variables   |   
+|----:|------------:|---------------:|--------------------------:|
+|1 | mean roll | avg_roll_belt|   roll_belt   |    
+|2 | variance of the roll  |   var_roll_belt  |   roll_belt   |   
+|3 |  maximum of the accelerometer vector|    |accel_belt_x,  accel_belt_y,  accel_belt_z|     
+|4   |  range of the accelerometer vector |   |accel_belt_x,  accel_belt_y,  accel_belt_z|     
+|5 |   variance of the accelerometer vector|   |   accel_belt_x,  accel_belt_y,  accel_belt_z|   
+|6  |   variance of the gyro|   |   gyros_belt_x,  gyros_belt_y, gyros_belt_z   |   
+|7  |   variance of the magnetometer|   | magnet_belt_x,	magnet_belt_y  |   
+  
+
+**Arm**   
+
+|    |   Feature   |   Column Name   |   Associated variables   |   
+|----:|------------:|---------------:|--------------------------:|
+|8 | variance of the accelerometer vector: | var_accel_arm| accel_arm_x,	accel_arm_y,	accel_arm_z     |    
+|9 | maximum of the magnetometer |     |  magnet_arm_x,	magnet_arm_y,	magnet_arm_z   |
+|10 |   minimum of the magnetometer|    |magnet_arm_x,	magnet_arm_y,	magnet_arm_z|     
+
+
+**Dumbbell**
+
+|    |   Feature   |   Column Name   |   Associated variables   |   
+|----:|------------:|---------------:|--------------------------:|
+|11 | maximum of the acceleration | total_accel_dumbbell |   accel_dumbbell_x, accel_dumbbell_y, accel_dumbbell_z   |    
+|12 | variance of the gyro  |    |   gyros_dumbbell_x,	gyros_dumbbell_y,	gyros_dumbbell_z   |   
+|13 |  maximum of magnetometer|    |magnet_dumbbell_x,	magnet_dumbbell_y,	magnet_dumbbell_z|     
+|14   |  minimum of the magnetometer |   |magnet_dumbbell_x	magnet_dumbbell_y	magnet_dumbbell_z|    
+
+**Glove** 
+
+
+|    |   Feature   |   Column Name   |   Associated variables   |   
+|----:|------------:|---------------:|--------------------------:|
+|15 | sum of the pitch |  |   pitch_forearm, avg_pitch_forearm   |    
+|16 | maximum of the gyro  |    |   gyros_forearm_x,	gyros_forearm_y,	gyros_forearm_z   |   
+|17 |  minimum of the gyro|    |gyros_forearm_x,	gyros_forearm_y,	gyros_forearm_z|   
+
+The derived features were calculated using the Euclidean magnitude of the associated vector:
+
+$$
+F=\left<\sqrt{F_x^2+F_y^2+F_z^2}\right>
+$$
+
+Where the average is taken over the corresponding time window (num_window). After this, the max, min, var or just the magnitude are taken.   
+
+## Processing of the Data
+
+Load the necessary libraries:
+
+```{r load libraries, cache=TRUE}
+library(caret)
+```
+
+Read the raw data:
+
+```{r read the training data}
+dataRaw <- read.csv(file="pml-training.csv",head=TRUE)
+#names(dataRaw)
+```
+
+Extract the ready available features: 
+
+```{r subset for relevant features, cache=TRUE}
+relFeatures<-c("num_window","new_window","avg_roll_belt","var_roll_belt","var_accel_arm","total_accel_dumbbell","classe")
+relvDataRaw <- dataRaw[,relFeatures]
+relvData<-subset(relvDataRaw,new_window=="yes")
+```
+
+Proceed to find the derived features:
+
+```{r Derived features, cache=TRUE}
+
+VariablesNames<-c("num_window","new_window", "accel_belt_x","accel_belt_y","accel_belt_z","gyros_belt_x","gyros_belt_y","gyros_belt_z","magnet_belt_x","magnet_belt_y", "magnet_arm_x","magnet_arm_y","magnet_arm_z", "gyros_dumbbell_x","gyros_dumbbell_y","gyros_dumbbell_z","magnet_dumbbell_x","magnet_dumbbell_y","magnet_dumbbell_z","pitch_forearm","gyros_forearm_x","gyros_forearm_y","gyros_forearm_z")
+
+Data<-dataRaw[,VariablesNames]
+
+# delete rows with calculated averages, we have already taken them
+
+Data<-Data[-(Data$new_window=="yes"),]
+
+Data$mag_acc_belt<-sqrt((Data$accel_belt_x)^2+(Data$accel_belt_y)^2+(Data$accel_belt_z)^2)
+
+Data$mag_gyro<-sqrt((Data$gyros_belt_x)^2+(Data$gyros_belt_y)^2+(Data$gyros_belt_z)^2)
+
+Data$mag_magnet<-sqrt((Data$magnet_belt_x)^2+(Data$magnet_belt_y)^2)
+
+max_acc_belt<-aggregate(mag_acc_belt~num_window,data=Data,max)
+
+colnames(max_acc_belt)[2]<-"max_acc_belt"
+
+min_acc_belt<-aggregate(mag_acc_belt~num_window,data=Data,min)
+
+colnames(min_acc_belt)[2]<-"min_acc_belt"
+
+var_acc_belt<-aggregate(mag_acc_belt~num_window,data=Data,var)
+
+colnames(var_acc_belt)[2]<-"var_acc_belt"
+
+var_gyro_belt<-aggregate(mag_gyro~num_window,data=Data,var)
+
+colnames(var_gyro_belt)[2]<-"var_gyro_belt"
+
+var_magnet_belt<-aggregate(mag_magnet~num_window,data=Data,var)
+
+colnames(var_magnet_belt)[2]<-"var_magnet_belt"
+
+# Merge the data sets for belt 
+
+relvData<-merge(relvData,max_acc_belt,by="num_window")
+
+relvData<-merge(relvData,min_acc_belt,by="num_window")
+
+relvData<-merge(relvData,var_acc_belt,by="num_window")
+
+relvData<-merge(relvData,var_gyro_belt,by="num_window")
+
+relvData<-merge(relvData,var_magnet_belt,by="num_window")
+
+```
+Now for the **arm** data
+
+```{r arm data, cache=TRUE}
+
+Data$mag_accel_arm<-sqrt((Data$magnet_arm_x)^2+(Data$magnet_arm_y)^2+(Data$magnet_arm_z)^2)
+
+max_acc_arm<-aggregate(mag_accel_arm~num_window,data=Data,max)
+
+colnames(max_acc_arm)[2]<-"max_acc_arm"
+
+min_acc_arm<-aggregate(mag_accel_arm~num_window,data=Data,min)
+
+colnames(min_acc_arm)[2]<-"min_acc_arm"
+
+# Merge Arm data
+
+relvData<-merge(relvData,max_acc_arm,by="num_window")
+
+relvData<-merge(relvData,min_acc_arm,by="num_window")
+
+```
+
+ Proceed with the **dumbbell** data:
+
+```{r dumbell data, cache=TRUE}
+
+Data$mag_gyro_dumbbell<-sqrt((Data$gyros_dumbbell_x)^2+(Data$gyros_dumbbell_y)^2+(Data$gyros_dumbbell_z)^2)
+
+gyro_dumbbell_var<-aggregate(mag_gyro_dumbbell~num_window,data=Data,var)
+
+colnames(gyro_dumbbell_var)[2]<-"gyro_dumbbell_var"
+
+Data$mag_magnet_dumbbell<-sqrt((Data$magnet_dumbbell_x)^2+(Data$magnet_dumbbell_y)^2+(Data$magnet_dumbbell_z)^2)
+
+max_magnet_dumbbell<-aggregate(mag_magnet_dumbbell~num_window,data=Data,max)
+
+colnames(max_magnet_dumbbell)[2]<-"max_magnet_dumbbell"
+
+min_magnet_dumbbell<-aggregate(mag_magnet_dumbbell~num_window,data=Data,min)
+
+colnames(min_magnet_dumbbell)[2]<-"min_magnet_dumbbell"
+
+# Merge dumbbell data
+
+relvData<-merge(relvData,gyro_dumbbell_var,by="num_window")
+
+relvData<-merge(relvData,max_magnet_dumbbell,by="num_window")
+
+relvData<-merge(relvData,min_magnet_dumbbell,by="num_window")
+
+```
+And finally the **glove** data
+
+```{r Glove data, cache=TRUE}
+Data$mag_gyros_forearm<-sqrt((Data$gyros_forearm_x)^2+(Data$gyros_forearm_y)^2+(Data$gyros_forearm_z)^2)
+
+max_gyros_forearm<-aggregate(mag_gyros_forearm~num_window,data=Data,max)
+
+colnames(max_gyros_forearm)[2]<-"max_gyros_forearm"
+
+min_gyros_forearm<-aggregate(mag_gyros_forearm~num_window,data=Data,min)
+
+colnames(min_gyros_forearm)[2]<-"min_gyros_forearm"
+
+# Merge glove data
+
+relvData<-merge(relvData,max_gyros_forearm,by="num_window")
+
+relvData<-merge(relvData,min_gyros_forearm,by="num_window")
+
+```
+Now some house cleaning,
+
+```{r remove unnecessary columns}
+
+drops<-c("new_window")
+relvData<-relvData[,!(names(relvData)%in% drops)]
+#names(relvData)
+```
+
+## Model and Model Prediction
+
+Random Forest algorithm was chosen for the predictions. There is a collection of weak independent
+features (variables) that need to be aggregated. Hence the decision of boosting is natural<sup>[1](#myfootnote1)</sup>.
+
+For cross validation the training set was divided into two different sets: training and tr_testing. The **training** set was used to produce the model and the **tr_testing** set was used for estimation of sample rates.
+
+```{r dividing the training set, cache=TRUE}
+set.seed(12345)#
+inTrain <- createDataPartition(y=relvData$classe,p=0.8, list=FALSE)
+training <- relvData[inTrain,]
+tr_testing <- relvData[-inTrain,]
+dim(training)
+dim(tr_testing)
+training<-na.omit(training)
+tr_testing<-na.omit(tr_testing)
+dim(training)
+dim(tr_testing)
+```
+Proceed to model
+
+```{r random forest, cache=TRUE}
+modelRF <- train(classe~.-(num_window),data=training,method="rf",prox=TRUE)
+modelRF
+```
+Estimate the sample error rates:
+
+```{r prediction, cache=TRUE}
+
+predRF<-predict(modelRF,newdata=tr_testing) 
+confusionMatrix(predRF,tr_testing$classe)
+
+```
+
+## Predictions for the Test Data:
+
+The test data consists of 20 different cases taken from individual time windows. Since derived features were used to make predictions, it is necessary some pre-processing. 
+
+The derived features for the test set were calculated using the information available for the corresponding window following the same definitions used for the training set.
+
+
+```{r read the test data,  include=FALSE, echo=FALSE}
+
+dataRaw_2 <- read.csv(file="pml-testing.csv",head=TRUE)
+
+testing<-as.data.frame(dataRaw_2$num_window)
+
+colnames(testing)[1]<-"num_window"
+
+testing<-merge(testing,relvData,by="num_window")
+
+testing
+
+difference<-setdiff(dataRaw_2$num_window, testing$num_window)
+
+drops<-c("classe")
+testing<-testing[,!(names(relvData)%in% drops)]
+```
+
+```{r finishing, include=FALSE, echo=FALSE}
+missingData<-dataRaw[dataRaw$num_window %in% difference,]
+VariablesNames<-c("num_window","roll_belt","accel_arm_x","accel_arm_y","accel_arm_z","accel_dumbbell_x","accel_dumbbell_y","accel_dumbbell_z","accel_belt_x","accel_belt_y","accel_belt_z","gyros_belt_x","gyros_belt_y","gyros_belt_z","magnet_belt_x","magnet_belt_y", "magnet_arm_x","magnet_arm_y","magnet_arm_z", "gyros_dumbbell_x","gyros_dumbbell_y","gyros_dumbbell_z","magnet_dumbbell_x","magnet_dumbbell_y","magnet_dumbbell_z","pitch_forearm","gyros_forearm_x","gyros_forearm_y","gyros_forearm_z")
+Data <- missingData[,VariablesNames]
+```
+
+```{r data finishing, include=FALSE, echo=FALSE}
+
+Data$mag_acc_belt<-sqrt((Data$accel_belt_x)^2+(Data$accel_belt_y)^2+(Data$accel_belt_z)^2)
+
+Data$mag_gyro<-sqrt((Data$gyros_belt_x)^2+(Data$gyros_belt_y)^2+(Data$gyros_belt_z)^2)
+
+Data$mag_magnet<-sqrt((Data$magnet_belt_x)^2+(Data$magnet_belt_y)^2)
+
+max_acc_belt<-aggregate(mag_acc_belt~num_window,data=Data,max)
+
+colnames(max_acc_belt)[2]<-"max_acc_belt"
+
+min_acc_belt<-aggregate(mag_acc_belt~num_window,data=Data,min)
+
+colnames(min_acc_belt)[2]<-"min_acc_belt"
+
+var_acc_belt<-aggregate(mag_acc_belt~num_window,data=Data,var)
+
+colnames(var_acc_belt)[2]<-"var_acc_belt"
+
+var_gyro_belt<-aggregate(mag_gyro~num_window,data=Data,var)
+
+colnames(var_gyro_belt)[2]<-"var_gyro_belt"
+
+var_magnet_belt<-aggregate(mag_magnet~num_window,data=Data,var)
+
+colnames(var_magnet_belt)[2]<-"var_magnet_belt"
+
+# Merge the data sets for belt 
+
+relvData<-merge(max_acc_belt,min_acc_belt,by="num_window")
+
+relvData<-merge(relvData,var_acc_belt,by="num_window")
+
+relvData<-merge(relvData,var_gyro_belt,by="num_window")
+
+relvData<-merge(relvData,var_magnet_belt,by="num_window")
+
+# Arm data
+
+Data$mag_accel_arm<-sqrt((Data$magnet_arm_x)^2+(Data$magnet_arm_y)^2+(Data$magnet_arm_z)^2)
+
+max_acc_arm<-aggregate(mag_accel_arm~num_window,data=Data,max)
+
+colnames(max_acc_arm)[2]<-"max_acc_arm"
+
+min_acc_arm<-aggregate(mag_accel_arm~num_window,data=Data,min)
+
+colnames(min_acc_arm)[2]<-"min_acc_arm"
+
+# Merge Arm data
+
+relvData<-merge(relvData,max_acc_arm,by="num_window")
+
+relvData<-merge(relvData,min_acc_arm,by="num_window")
+
+# dumbbell 
+
+Data$mag_gyro_dumbbell<-sqrt((Data$gyros_dumbbell_x)^2+(Data$gyros_dumbbell_y)^2+(Data$gyros_dumbbell_z)^2)
+
+gyro_dumbbell_var<-aggregate(mag_gyro_dumbbell~num_window,data=Data,var)
+
+colnames(gyro_dumbbell_var)[2]<-"gyro_dumbbell_var"
+
+Data$mag_magnet_dumbbell<-sqrt((Data$magnet_dumbbell_x)^2+(Data$magnet_dumbbell_y)^2+(Data$magnet_dumbbell_z)^2)
+
+max_magnet_dumbbell<-aggregate(mag_magnet_dumbbell~num_window,data=Data,max)
+
+colnames(max_magnet_dumbbell)[2]<-"max_magnet_dumbbell"
+
+min_magnet_dumbbell<-aggregate(mag_magnet_dumbbell~num_window,data=Data,min)
+
+colnames(min_magnet_dumbbell)[2]<-"min_magnet_dumbbell"
+
+# Merge dumbbell data
+
+relvData<-merge(relvData,gyro_dumbbell_var,by="num_window")
+
+relvData<-merge(relvData,max_magnet_dumbbell,by="num_window")
+
+relvData<-merge(relvData,min_magnet_dumbbell,by="num_window")
+
+# Glove data
+
+Data$mag_gyros_forearm<-sqrt((Data$gyros_forearm_x)^2+(Data$gyros_forearm_y)^2+(Data$gyros_forearm_z)^2)
+
+max_gyros_forearm<-aggregate(mag_gyros_forearm~num_window,data=Data,max)
+
+colnames(max_gyros_forearm)[2]<-"max_gyros_forearm"
+
+min_gyros_forearm<-aggregate(mag_gyros_forearm~num_window,data=Data,min)
+
+colnames(min_gyros_forearm)[2]<-"min_gyros_forearm"
+
+# Merge glove data
+
+relvData<-merge(relvData,max_gyros_forearm,by="num_window")
+
+relvData<-merge(relvData,min_gyros_forearm,by="num_window")
+
+# "avg_roll_belt
+
+avg_roll_belt<-aggregate(roll_belt~num_window,data=Data,mean)
+
+colnames(avg_roll_belt)[2]<-"avg_roll_belt"
+
+relvData<-merge(relvData,avg_roll_belt,by="num_window")
+
+# "var_roll_belt"
+
+var_roll_belt<-aggregate(roll_belt~num_window,data=Data,var)
+
+colnames(var_roll_belt)[2]<-"var_roll_belt"
+
+relvData<-merge(relvData,var_roll_belt,by="num_window")
+
+# var_accel_arm
+
+Data$mag_accel_arm<-sqrt((Data$accel_arm_x)^2+(Data$accel_arm_y)^2+(Data$accel_arm_z)^2)
+
+var_accel_arm<-aggregate(mag_accel_arm~num_window,data=Data,var)
+
+colnames(var_accel_arm)[2]<-"var_accel_arm"
+
+relvData<-merge(relvData,var_accel_arm,by="num_window")
+
+# "total_accel_dumbbell"
+
+Data$total_accel_dumbbell<-sqrt((Data$accel_dumbbell_x)^2+(Data$accel_dumbbell_y)^2+(Data$accel_dumbbell_z)^2)
+
+total_accel_dumbbell<-aggregate(total_accel_dumbbell~num_window,data=Data,mean)
+
+colnames(total_accel_dumbbell)[2]<-"total_accel_dumbbell"
+
+relvData<-merge(relvData,total_accel_dumbbell,by="num_window")
+```
+
+```{r last merge, include=FALSE, echo=FALSE}
+
+# names(testing)
+# names(relvData)
+# setdiff(names(testing), names(relvData))
+# setdiff(names(relvData),names(testing))
+total<-rbind(testing,relvData)
+
+
+```
+
+A new test set, with the name **total**, was produced. 
+Predictions on the test set are shown below:
+
+```{r predictions for test set}
+
+predRF_test<-predict(modelRF,newdata=total) 
+table(total$num_window, predRF_test)
+```
+
+<a name="myfootnote1">1</a>: http://groupware.les.inf.puc-rio.br/work.jsf?p1=11201
